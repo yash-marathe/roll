@@ -15,7 +15,7 @@ train_env_manager:
   num_env_groups: 1
   # under the same group, the env config and env seed are ensured to be equal
   group_size: 1
-  tags: [SimpleSokoban]
+  tags: [LetterCounting]
   num_groups_partition: [1] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
   llm_proxy:
     proxy_type: random
@@ -26,6 +26,16 @@ train_env_manager:
 #      api_key: xxx
 #      model_name: Qwen2.5-72B-Instruct-Chatflow
 
+
+val_env_manager:
+  max_env_num_per_worker: 1
+  num_env_groups: 1
+  group_size: 1
+  tags: [LetterCounting]
+  num_groups_partition: [1] # If not set, all env names divide nums equally. Under the same group, the env config and env seed (prompt) are equal in each generation
+  llm_proxy:
+    proxy_type: random
+
 actor_infer:
   generating_args:
     max_new_tokens: 128 # single-turn response length
@@ -35,13 +45,13 @@ actor_infer:
     temperature: 0.99
     num_return_sequences: 1
 
-custom_envs:
-  SimpleSokoban:
-    ${custom_env.SimpleSokoban}
 
-custom_env:
-  SimpleSokoban:
-    env_type: sokoban
+max_actions_per_traj: 100
+default_history_length: ${max_actions_per_traj}
+env_manager_cls: roll.pipeline.agentic.env_manager.step_env_manager.StepEnvManager
+custom_envs:
+  GuessTheNumber:
+    env_type: game:GuessTheNumber-v0 # Based on default/first registration
     max_steps: ${max_actions_per_traj}
     max_tokens_per_step: ${max_tokens_per_step}
     env_manager_cls: ${env_manager_cls}
@@ -49,8 +59,33 @@ custom_env:
     history_length: ${default_history_length}
     agent_system_template: ${agent_system_template}
     agent_template: ${agent_template}
-    env_config: # keys should be a subset of SokobanConfig
-      action_pattern: ${all_response_pattern}
-      max_steps: ${max_actions_per_traj}
-      dim_room: [6, 6]
-      num_boxes: 1
+    env_config:
+      min_number: 1
+      max_number: 20
+      max_turns: ${max_actions_per_traj} # From GuessTheNumber-v0 registration
+  LetterCounting:
+    env_type: "rg:leg_counting"
+    max_steps: ${max_actions_per_traj}
+    max_tokens_per_step: ${max_tokens_per_step}
+    env_manager_cls: ${env_manager_cls}
+    agent_system_template: ${rg_agent_system_template}
+    agent_template: ${rg_agent_template}
+    env_config:
+      size: 500
+      seed: 42
+
+agent_system_template: ~
+
+agent_template: |
+  You are playing language games. Make valid actions to win.
+  Observation:
+  {history}
+  {current_observation}
+  Please reason step by step, and put your final answer within \\boxed{{}}.
+
+
+rg_agent_system_template: ~
+rg_agent_template: |
+  {current_observation}
+  Please reason step by step, and put your final answer within \\boxed{{}}, e.g. \\boxed{{A}}.
+  

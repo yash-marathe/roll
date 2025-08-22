@@ -90,7 +90,7 @@ def test_debug_vl_traj_env_manager():
 
 def test_debug_step_env_manager():
     config_path = ""
-    config_name = "step_env_manager_debug"
+    config_name = "gem_env_manager_debug"
 
     pipeline_config: AgenticConfig = make_pipeline_config(config_path, config_name, AgenticConfig)
 

@@ -280,20 +280,18 @@ class AgenticPipeline(BasePipeline):
                     prompts = self.tokenizer.batch_decode(prompt_ids, skip_special_tokens=True)
                     responses = self.tokenizer.batch_decode(response_ids, skip_special_tokens=True)
                     episode_scores = group_batch.non_tensor_batch["episode_scores"].tolist()
-                    penalties = group_batch.batch["penalty"].tolist()
-                    for prompt, prompt_id, response, response_id, episode_score, penalty in zip(
-                            prompts, prompt_ids, responses, response_ids, episode_scores, penalties
+                    for prompt, prompt_id, response, response_id, episode_score in zip(
+                            prompts, prompt_ids, responses, response_ids, episode_scores
                     ):
                         log_res.append(
                             {
                                 "prompt": prompt,
                                 "response": response,
                                 "episode_score": episode_score,
-                                "penalty": penalty,
                             }
                         )
-                    if len(log_res) >= 10:
-                        break
+                    # if len(log_res) >= 10:
+                    #     break
                 logger.info(json.dumps(log_res, ensure_ascii=False))
                 logger.info(json.dumps(metrics, ensure_ascii=False))
 
@@ -370,6 +368,9 @@ class AgenticPipeline(BasePipeline):
                 mode = "copy"
             else:
                 mode = "delete"
+        elif mode == "random_sample":
+            if batch_size < size_divide:
+                mode = "copy"
 
         metrics = data.meta_info.get("metrics", {})
         metrics["system/batch_add_count"] = 0
@@ -391,6 +392,11 @@ class AgenticPipeline(BasePipeline):
             # TODO: set dup_proto response_mask to 0
             adjusted_batch = DataProto.concat([data, dup_proto])
             metrics["system/batch_add_count"] = to_add
+        elif mode == "random_sample":
+            select_indices = np.random.choice(batch_size, size_divide, replace=False)
+            select_indices = np.sort(select_indices)
+            adjusted_batch = data.select_idxs(select_indices)
+            metrics["system/batch_remove_count"] = batch_size - size_divide
         else:
             raise ValueError(f"Unsupported mode: {mode}")
 
@@ -418,8 +424,7 @@ def compute_data_metrics(batch):
     prompt_lengths = prompt_mask.sum(-1).float()  # (batch_size,)
     response_length = response_mask.sum(-1).float()  # (batch_size,)
     returns = batch.batch["returns"]
-    non_prompt_mask = torch.logical_not(batch.batch["prompt_mask"]).float()
-    penalty: torch.Tensor = batch.batch["penalty"]
+    non_prompt_mask = torch.logical_not(batch.batch["prompt_mask"]).float().sum(-1)
 
     metrics = {
         # score, sequence_score from env
@@ -430,10 +435,6 @@ def compute_data_metrics(batch):
         "critic/rewards/mean": torch.mean(sequence_reward).detach().item(),
         "critic/rewards/max": torch.max(sequence_reward).detach().item(),
         "critic/rewards/min": torch.min(sequence_reward).detach().item(),
-        # penalty
-        "critic/penalty/mean": torch.mean(penalty).detach().item(),
-        "critic/penalty/max": torch.max(penalty).detach().item(),
-        "critic/penalty/min": torch.min(penalty).detach().item(),
         # adv
         "critic/advantages/mean": masked_mean(advantages, response_mask).detach().item(),
         "critic/advantages/max": torch.max(advantages[response_mask]).detach().item(),
