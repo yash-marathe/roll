@@ -222,5 +222,19 @@
       "total": 141,
       "open": 5
     }
+  },
+  "2025-12-13": {
+    "stars": 2464,
+    "forks": 175,
+    "contributors": 36,
+    "issues": {
+      "total": 144,
+      "open": 60,
+      "fixRate": 58
+    },
+    "prs": {
+      "total": 142,
+      "open": 5
+    }
   }
 }
