@@ -656,5 +656,20 @@
       "total": 149,
       "open": 7
     }
+  },
+  "2026-01-13": {
+    "stars": 2627,
+    "forks": 198,
+    "contributors": 37,
+    "commits": 372,
+    "issues": {
+      "total": 161,
+      "open": 71,
+      "fixRate": 55
+    },
+    "prs": {
+      "total": 151,
+      "open": 7
+    }
   }
 }
