@@ -35,9 +35,8 @@ ENV ROCM_PATH=/opt/rocm \
 
 # ── install uv (fast Python package manager) ─────────────────────────────────
 COPY --from=ghcr.io/astral-sh/uv:0.10.2 /uv /uvx /usr/local/bin/
-# Point uv at the conda Python; UV_SYSTEM_PYTHON is omitted because uv does
-# not recognise conda environments as "system" installs.
-ENV UV_PYTHON=/opt/conda/envs/py_3.10/bin/python \
+# Expose the conda env as a virtual environment so uv can install into it.
+ENV VIRTUAL_ENV=/opt/conda/envs/py_3.10 \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1
 
