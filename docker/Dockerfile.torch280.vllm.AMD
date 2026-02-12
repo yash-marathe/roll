@@ -17,6 +17,9 @@ ENV ROCM_PATH=/opt/rocm \
     HIP_PATH=/opt/rocm \
     HIP_CLANG_PATH=/opt/rocm/llvm/bin \
     ROCM_HOME=/opt/rocm \
+    # CUDA_HOME must point to ROCm — HIP's compiler is nvcc-compatible and
+    # many build scripts (including vLLM's setup.py) check CUDA_HOME first.
+    CUDA_HOME=/opt/rocm \
     # Target architecture: MI300X (gfx942). Adjust for other GPUs.
     PYTORCH_ROCM_ARCH=gfx942 \
     AMDGPU_TARGETS=gfx942 \
@@ -85,8 +88,10 @@ RUN uv pip install \
 # ── build & install vLLM from source (ROCm 7.1 + Python 3.10) ───────────────
 # No pre-built wheel exists for ROCm 7.1 / cp310; build from the v0.15.1 tag.
 ARG VLLM_VERSION=v0.15.1
+# Fetch enough history for setuptools_scm to resolve the version tag.
 RUN git clone --depth 1 --branch ${VLLM_VERSION} \
-        https://github.com/vllm-project/vllm.git /tmp/vllm
+        https://github.com/vllm-project/vllm.git /tmp/vllm \
+    && cd /tmp/vllm && git fetch --tags --depth 1
 
 WORKDIR /tmp/vllm
 
@@ -102,7 +107,7 @@ RUN uv pip install /opt/rocm/share/amd_smi || true
 # Build vLLM C++ extensions against the existing PyTorch + ROCm 7.1.
 RUN --mount=type=cache,target=/root/.cache/uv \
     MAX_JOBS="$(nproc)" \
-    python setup.py develop 2>&1 | tail -20
+    python setup.py develop
 
 WORKDIR /
 
