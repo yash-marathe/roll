@@ -36,6 +36,7 @@ ENV ROCM_PATH=/opt/rocm \
 # ── install uv (fast Python package manager) ─────────────────────────────────
 COPY --from=ghcr.io/astral-sh/uv:0.10.2 /uv /uvx /usr/local/bin/
 ENV UV_SYSTEM_PYTHON=1 \
+    UV_PYTHON=/opt/conda/envs/py_3.10/bin/python \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1
 
@@ -62,8 +63,9 @@ RUN uv pip install \
         "gymnasium[toy-text]==1.2.3" \
         "gym_sokoban" \
         # --- math / evaluation ---
+        # NOTE: math-verify pulls latex2sympy2_extended which supersedes latex2sympy2.
+        # Do NOT install latex2sympy2 alongside math-verify (antlr4 version conflict).
         "math-verify==0.9.0" \
-        "latex2sympy2==1.9.1" \
         "pycocotools==2.0.11" \
         # --- experiment tracking ---
         "swanlab==0.7.8" \
@@ -71,7 +73,7 @@ RUN uv pip install \
         "hydra-core==1.3.2" \
         "isort==7.0.0" \
         "jsonlines==4.0.0" \
-        "pyext==0.7" \
+        "pyext==0.5" \
         "dacite==1.9.2" \
         "codetiming==1.4.0" \
         # --- build helpers (needed for vllm) ---
