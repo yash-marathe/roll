@@ -1,33 +1,136 @@
-FROM rocm/pytorch-training:v25.6
-RUN pip3 install ray==2.48.0 \
-&& pip3 install pydantic==2.11.7 \
-&& pip3 install huggingface-hub==0.34.0 \
-&& pip3 install https://github.com/aaab8b/roll_amd_dependencies/releases/download/v0.1/megatron_core-0.12.2-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl \
-&& pip3 install https://github.com/aaab8b/roll_amd_dependencies/releases/download/v0.1/vllm-0.10.0+rocm634-cp310-cp310-linux_x86_64.whl \
-&& pip3 install tensordict \
-&&pip3 install modelscope \
-&& pip3 install loralib \
-&& pip3 install isort \
-&& pip3 install jsonlines \
-&& pip3 install pyext \
-&& pip3 install dacite \
-&& pip3 install codetiming \
-&& pip3 install swanlab \
-&& pip3 install math-verify \
-&& pip3 install gym \
-&& pip3 install gymnasium[toy-text] \
-&& pip3 install gym_sokoban \
-&& pip3 install hydra-core \
-&& pip3 install latex2sympy2==1.5.4 \
-&& pip3 install pycocotools
-RUN git clone https://github.com/alibaba/ROLL.git /app/ROLL
+# ==============================================================================
+# Dockerfile.torch280.vllm.AMD
+# ROCm-based PyTorch + vLLM image for AMD GPUs (MI300X / gfx942)
+# Base: rocm/pytorch-training:v26.1
+#   - ROCm 7.1.0  |  PyTorch 2.10.0.dev+rocm7.1  |  Python 3.10
+#   - Flash Attention 2.8.3  |  Triton 3.4.0  |  Transformer Engine 2.4.0
+# ==============================================================================
+
+FROM rocm/pytorch-training:v26.1
+
+# ── shell & frontend ─────────────────────────────────────────────────────────
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── ROCm / HIP environment variables ─────────────────────────────────────────
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    HIP_CLANG_PATH=/opt/rocm/llvm/bin \
+    ROCM_HOME=/opt/rocm \
+    # Target architecture: MI300X (gfx942). Adjust for other GPUs.
+    PYTORCH_ROCM_ARCH=gfx942 \
+    AMDGPU_TARGETS=gfx942 \
+    HCC_AMDGPU_TARGET=gfx942 \
+    HSA_OVERRIDE_GFX_VERSION=9.4.2 \
+    # RCCL / collective-communication tuning
+    HSA_NO_SCRATCH_RECLAIM=1 \
+    NCCL_DEBUG=WARN \
+    # HIP runtime behaviour
+    HIP_FORCE_DEV_KERNARG=1 \
+    GPU_MAX_HW_QUEUES=4 \
+    # Ensure ROCm libs are on the search path
+    LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH} \
+    PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH} \
+    PYTHONPATH=""
+
+# ── install uv (fast Python package manager) ─────────────────────────────────
+COPY --from=ghcr.io/astral-sh/uv:0.10.2 /uv /uvx /usr/local/bin/
+ENV UV_SYSTEM_PYTHON=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
+
+# ── system packages ──────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        cmake \
+        ninja-build \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python core dependencies ─────────────────────────────────────────────────
+# Grouped by category; every package pinned to the latest compatible version.
+RUN uv pip install \
+        # --- ML / inference framework deps ---
+        "ray[cgraph]==2.53.0" \
+        "pydantic==2.12.5" \
+        "huggingface-hub[cli,hf_transfer]==1.4.1" \
+        "tensordict==0.11.0" \
+        "modelscope==1.34.0" \
+        "loralib==0.1.2" \
+        # --- RL / gym ---
+        "gym==0.26.2" \
+        "gymnasium[toy-text]==1.2.3" \
+        "gym_sokoban" \
+        # --- math / evaluation ---
+        "math-verify==0.9.0" \
+        "latex2sympy2==1.9.1" \
+        "pycocotools==2.0.11" \
+        # --- experiment tracking ---
+        "swanlab==0.7.8" \
+        # --- config / utilities ---
+        "hydra-core==1.3.2" \
+        "isort==7.0.0" \
+        "jsonlines==4.0.0" \
+        "pyext==0.7" \
+        "dacite==1.9.2" \
+        "codetiming==1.4.0" \
+        # --- build helpers (needed for vllm) ---
+        "setuptools>=77.0.3,<80.0.0" \
+        "setuptools-scm>=8" \
+        "packaging>=24.2" \
+        "wheel"
+
+# ── build & install vLLM from source (ROCm 7.1 + Python 3.10) ───────────────
+# No pre-built wheel exists for ROCm 7.1 / cp310; build from the v0.15.1 tag.
+ARG VLLM_VERSION=v0.15.1
+RUN git clone --depth 1 --branch ${VLLM_VERSION} \
+        https://github.com/vllm-project/vllm.git /tmp/vllm
+
+WORKDIR /tmp/vllm
+
+# Keep the container's PyTorch 2.10.0.dev+rocm7.1 intact.
+RUN python use_existing_torch.py
+
+# Install ROCm-specific deps (rocm.txt → common.txt).
+RUN uv pip install -r requirements/rocm.txt
+
+# Install AMD SMI bindings shipped with ROCm.
+RUN uv pip install /opt/rocm/share/amd_smi || true
+
+# Build vLLM C++ extensions against the existing PyTorch + ROCm 7.1.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    MAX_JOBS="$(nproc)" \
+    python setup.py develop 2>&1 | tail -20
+
+WORKDIR /
+
+# ── clone ROLL & install mcore_adapter ───────────────────────────────────────
+RUN git clone --depth 1 https://github.com/alibaba/ROLL.git /app/ROLL
 
 WORKDIR /app/ROLL
-RUN pip3 install ./mcore_adapter \
-&& export PYTHONPATH=/app/ROLL:$PYTHONPATH
+RUN uv pip install ./mcore_adapter
+ENV PYTHONPATH=/app/ROLL:${PYTHONPATH}
 
-RUN sed -i 's/_flash_attn_max_version = PkgVersion("2\.7\.3")/_flash_attn_max_version = PkgVersion("3.0.0.post1")/' /opt/conda/envs/py_3.10/lib/python3.10/site-packages/transformer_engine/pytorch/attention.py \
-&& sed -i -e '/^[[:space:]]*if envs.VLLM_USE_STANDALONE_COMPILE and is_torch_equal_or_newer(/ {' -e 'N' -e 's/^\([[:space:]]*\).*\n.*/\1if False:/' -e '}' /opt/conda/envs/py_3.10/lib/python3.10/site-packages/vllm/compilation/backends.py \
-&& sed -i \
--e '/^[[:space:]]*if cuda_val := os.environ.get(CUDA_VISIBLE_DEVICES_ENV_VAR, None) is not None:/ s/^\([[:space:]]*if \)cuda_val := os.environ.get(CUDA_VISIBLE_DEVICES_ENV_VAR, None) is not None:/\1(cuda_val := os.environ.get(CUDA_VISIBLE_DEVICES_ENV_VAR, None)) is not None:/' \
--e '/^[[:space:]]*if hip_val := os.environ.get(HIP_VISIBLE_DEVICES_ENV_VAR, None) is None:/ s/^\([[:space:]]*if \)hip_val:= os.environ.get(HIP_VISIBLE_DEVICES_ENV_VAR, None) is None:/\1(hip_val := os.environ.get(HIP_VISIBLE_DEVICES_ENV_VAR, None)) is None:/' /opt/conda/envs/py_3.10/lib/python3.10/site-packages/ray/_private/accelerators/amd_gpu.py
+# ── post-install patches ─────────────────────────────────────────────────────
+# Allow Flash Attention versions up to 3.x in Transformer Engine.
+RUN SITE=$(python -c "import site; print(site.getsitepackages()[0])") \
+    && sed -i \
+        's/_flash_attn_max_version = PkgVersion("2\.7\.3")/_flash_attn_max_version = PkgVersion("3.0.0.post1")/' \
+        "${SITE}/transformer_engine/pytorch/attention.py" \
+    # Disable standalone-compile guard in vLLM compilation backend.
+    && sed -i -e \
+        '/^[[:space:]]*if envs.VLLM_USE_STANDALONE_COMPILE and is_torch_equal_or_newer(/ {' \
+        -e 'N' \
+        -e 's/^\([[:space:]]*\).*\n.*/\1if False:/' \
+        -e '}' \
+        "${SITE}/vllm/compilation/backends.py" \
+    # Fix walrus-operator precedence bugs in Ray's AMD GPU accelerator module.
+    && sed -i \
+        -e '/^[[:space:]]*if cuda_val := os.environ.get(CUDA_VISIBLE_DEVICES_ENV_VAR, None) is not None:/ s/^\([[:space:]]*if \)cuda_val := os.environ.get(CUDA_VISIBLE_DEVICES_ENV_VAR, None) is not None:/\1(cuda_val := os.environ.get(CUDA_VISIBLE_DEVICES_ENV_VAR, None)) is not None:/' \
+        -e '/^[[:space:]]*if hip_val := os.environ.get(HIP_VISIBLE_DEVICES_ENV_VAR, None) is None:/ s/^\([[:space:]]*if \)hip_val:= os.environ.get(HIP_VISIBLE_DEVICES_ENV_VAR, None) is None:/\1(hip_val := os.environ.get(HIP_VISIBLE_DEVICES_ENV_VAR, None)) is None:/' \
+        "${SITE}/ray/_private/accelerators/amd_gpu.py"
+
+# ── cleanup ──────────────────────────────────────────────────────────────────
+RUN rm -rf /tmp/vllm /root/.cache/pip
+
+WORKDIR /app/ROLL
